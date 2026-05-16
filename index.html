@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Proko</title>
+  <!-- PWA / mobile meta -->
+  <meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="description" content="Proko – Lern-Timer mit Pomodoro & Flow, Statistik, Würfelspiel und Wochen-Leaderboard." />
+  <meta name="format-detection" content="telephone=no" />
+  <!-- iOS PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Proko" />
+  <link rel="apple-touch-icon" href="/favicon-96x96.png" />
+  <!-- Web App Manifest -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
+</head>
+<body>
+  <!-- ── BETA GATE ── shown first, blocks the entire app until the user enters the beta password ── -->
+  <div class="betaGate" id="betaGate" aria-modal="true" role="dialog">
+    <div class="betaGateCard">
+      <div class="betaGateBadge">CLOSED BETA</div>
+      <h1 class="betaGateTitle">Proko</h1>
+      <p class="betaGateLead">
+        Diese Webseite befindet sich aktuell in einer <strong>geschlossenen Beta</strong>.
+      </p>
+      <p class="betaGateText">
+        Wir testen, optimieren und arbeiten noch an Inhalten, Datenschutz-Details und der allgemeinen Funktionalität.
+        Ein Veröffentlichungstermin steht noch nicht fest.
+      </p>
+      <p class="betaGateText">
+        Wenn du ein Zugangspasswort hast, kannst du es unten eingeben, um die App zu öffnen.
+      </p>
+      <div class="betaGateForm">
+        <input type="password" id="betaGateInput" class="betaGateInput"
+               placeholder="Beta-Passwort"
+               autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <button type="button" id="betaGateSubmit" class="btn primary betaGateSubmit">Eintreten</button>
+      </div>
+      <div class="betaGateError" id="betaGateError"></div>
+      <div class="betaGateFooter">© Proko · Closed Beta</div>
+    </div>
+  </div>
+
+  <div class="app">
+    <div class="topbar">
+      <div class="topbarLeft">
+        <div class="pointsPill" id="pointsPill" title="Punkte aus abgeschlossenen Lerneinheiten">
+          <span aria-hidden="true">⭐</span>
+          <span class="pointsLabel">Punkte:</span>
+          <span class="pointsVal" id="pointsValTop">0</span>
+        </div>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-tab="timer">Timer</button>
+        <button class="tab" data-tab="dice">Würfelspiel</button>
+        <button class="tab" data-tab="stats">Statistik</button>
+        <button class="tab" data-tab="leaderboard">Leaderboard</button>
+        <button class="tab" data-tab="todo">To-Do</button>
+      </div>
+      <div class="topbarRight">
+        <div class="soundWrap" id="soundWrap">
+          <button class="soundBtn" id="soundBtn" aria-label="Lautstärke" title="Lautstärke">🔊</button>
+          <div class="soundPopover" id="soundPopover" aria-hidden="true">
+            <input type="range" id="soundSlider" class="soundSlider" min="0" max="100" step="1" value="100" aria-label="Lautstärke" />
+            <div class="soundValue" id="soundValue">100%</div>
+          </div>
+        </div>
+        <button class="topbarAvatar" id="topbarAvatarBtn" aria-label="Profil öffnen" title="Profil"></button>
+        <button class="logoutBtn" id="logoutBtn" aria-label="Abmelden" title="Abmelden">↪</button>
+      </div>
+    </div>
+    <div class="divider"></div>
+
+    <div class="content">
+      <!-- ───────── TIMER VIEW ───────── -->
+      <section class="view active" id="timerView">
+        <div class="header">
+          <div>
+            <div class="title">Proko</div>
+            <div class="subtitle" id="topInfo"></div>
+          </div>
+          <div class="headerActions">
+            <button class="rewardDiceBtn" id="rewardDiceBtn" title="Belohnungs-Würfel">
+              🎲
+              <span class="rewardBadge" id="rewardBadge">0</span>
+            </button>
+            <button class="iconBtn" id="compactOpen" title="Kompaktmodus">⊡</button>
+          </div>
+        </div>
+
+        <div class="modeTabs" role="tablist" aria-label="Timer-Modus">
+          <button type="button" class="modeTabBtn active" id="modeTabPomodoro" data-mode="pomodoro" role="tab">⏱ Pomodoro</button>
+          <button type="button" class="modeTabBtn" id="modeTabFlow" data-mode="flow" role="tab">🌊 Flow</button>
+        </div>
+
+        <div class="cardOuter" style="margin-top:8px;">
+          <div class="card timerCard">
+            <div class="timerStack">
+              <div class="timer" id="timerText">30:00</div>
+              <div class="progressShell"><div class="progressFill" id="phaseFill"></div></div>
+            </div>
+            <div class="status" id="statusText">Bereit</div>
+          </div>
+        </div>
+
+        <div class="progressCanvasWrap" id="trackWrap" style="position:relative;">
+          <canvas id="trackCanvas" width="940" height="120"></canvas>
+          <button type="button" class="trackHoverBtn trackRemoveBtn" id="trackRemoveBtn" style="display:none;" aria-label="Letztes Intervall entfernen">✕ Entfernen</button>
+          <button type="button" class="trackHoverBtn trackAddBtn" id="trackAddBtn" style="display:none;" aria-label="Neues Intervall hinzufügen" title="Neues Intervall hinzufügen">+</button>
+        </div>
+
+        <div class="legend">
+          <div class="legendItem"><span class="legendBox"></span><span id="legendLearn">Lernen 30 Min</span></div>
+          <div class="legendItem"><span class="legendDot"></span><span id="legendShort">Ungerade Pause 5 Min</span></div>
+          <div class="legendItem"><span class="legendDot"></span><span id="legendLong">Gerade Pause 10 Min</span></div>
+          <div class="legendItem" id="legendBigItem"><span class="legendDot"></span><span id="legendBig">Große Pause 180 Min</span></div>
+        </div>
+
+        <div class="mpBtnRow">
+          <button class="mpBtn" id="resetBtn" aria-label="Intervall zurück" title="Intervall zurück">⏮</button>
+          <button class="mpBtn primary" id="startBtn" aria-label="Start / Pause" title="Start / Pause">▶</button>
+          <button class="mpBtn" id="skipBtn" aria-label="Pause überspringen" title="Pause überspringen">⏭</button>
+        </div>
+
+        <div class="progressText" id="progressText">0h 00m / 4 Stunden</div>
+
+        <div id="finishBox" class="finishBox" style="display:none;">
+          <button class="btn green" id="celebrateBtn">Ja, fertig mit Lernen für heute!</button>
+        </div>
+
+        <div class="commandConsole">
+          <div class="commandRow">
+            <input type="text" id="commandInput" class="commandInput" placeholder='Command (z.B. "/set points 10")' autocomplete="off" spellcheck="false" />
+            <button type="button" id="commandSubmit" class="commandSubmit">Ausführen</button>
+          </div>
+          <div class="commandFeedback" id="commandFeedback"></div>
+        </div>
+      </section>
+
+      <!-- ───────── DICE GAME VIEW ───────── -->
+      <section class="view" id="diceView">
+        <div class="diceLockedHint" id="diceLockedHint" style="display:none;max-width:580px;margin:24px auto 0;padding:18px 20px;background:var(--btn-neutral);border:1px solid var(--card-border);border-radius:14px;color:var(--text-dim);font-size:14px;text-align:center;line-height:1.55;">
+          <div style="font-size:26px;margin-bottom:8px;">🔒</div>
+          <strong style="color:var(--text);">Würfelspiel gesperrt</strong><br>
+          Während eines Lernintervalls kannst du nicht würfeln.<br>
+          Schließe die Lerneinheit ab oder starte die Pause, um zu spielen.
+        </div>
+        <div class="diceGameWrap" id="diceGameWrap">
+          <div class="diceGameHeader">
+            <div class="diceGameTitleBlock">
+              <div class="diceGameTitle">Würfelspiel</div>
+              <div class="diceGameSubtitle" id="diceSubtitle">Setze deine Punkte und tippe richtig.</div>
+            </div>
+          </div>
+
+          <div class="modeSwitch">
+            <button class="modeBtn active" id="modeExact" type="button">🎯 Exakt</button>
+            <button class="modeBtn" id="modeOE" type="button">⚖️ Gerade / Ungerade</button>
+          </div>
+
+          <div class="statsRow">
+            <div class="pillBox">
+              <span aria-hidden="true">⭐</span>
+              <span class="pillLbl">Punkte:</span>
+              <span class="pillVal" id="diceScore">0</span>
+            </div>
+            <div class="pillBox streakBox" id="streakBox">
+              <span aria-hidden="true">🔥</span>
+              <span class="pillLbl">Streak:</span>
+              <span class="pillVal" id="streakVal">0</span>
+              <span class="streakBonus" id="streakBonus"></span>
+            </div>
+          </div>
+
+          <div class="multInfo">
+            Basis: <strong id="multBase">5.4×</strong> · Streak-Bonus: <span class="bonusTag" id="bonusTag">+0%</span>
+          </div>
+
+          <div class="diceLabels">
+            <div>Dein Tipp</div>
+            <div>Einsatz</div>
+            <div>Aktion</div>
+          </div>
+          <div class="diceControls">
+            <button id="guessButton" class="diceGuessBtn" type="button">
+              <span id="guessLabel">Kein Tipp</span>
+              <span class="gVal" id="guessValue"></span>
+            </button>
+            <input id="bet" class="diceBetInput" type="number" min="1" placeholder="Einsatz" />
+            <button id="rollGameBtn" class="diceRollBtn">Würfeln</button>
+          </div>
+
+          <div class="diceGameArea">
+            <div id="gameDie" class="die" aria-label="Würfel">
+              <span class="pip tl"></span><span class="pip tr"></span>
+              <span class="pip ml"></span><span class="pip mr"></span>
+              <span class="pip c"></span>
+              <span class="pip bl"></span><span class="pip br"></span>
+            </div>
+
+            <div class="diceResult">
+              <div id="diceMessage" class="diceMessage">Noch nicht gewürfelt.</div>
+              <div id="diceSmall" class="diceSmall">Wähle Modus, tippe eine Zahl und gib deinen Einsatz ein.</div>
+            </div>
+
+            <button id="restartBtn" class="restartBtn" style="display:none" type="button">↺ Streak zurücksetzen</button>
+          </div>
+
+          <div class="needPointsHint" id="needPointsHint" style="display:none;">
+            <strong>Keine Punkte mehr.</strong><br>
+            Schließe Lerneinheiten ab und sammle neue Punkte über den Belohnungs-Würfel im Timer-Tab.
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────── STATS VIEW ───────── -->
+      <section class="view" id="statsView">
+        <div class="sectionTitle">Lernstatistik</div>
+        <div class="statsNote">Lernstunden pro Tag — die letzten 52 Wochen</div>
+        <div class="summaryGrid" id="summaryGrid"></div>
+        <div class="progressCanvasWrap" style="margin-top:22px;">
+          <canvas id="heatCanvas" width="980" height="140"></canvas>
+        </div>
+      </section>
+
+      <!-- ───────── LEADERBOARD VIEW ───────── -->
+      <section class="view" id="leaderboardView">
+        <div class="sectionTitle">Leaderboard</div>
+        <div class="statsNote" id="leaderboardSub">Wer hat diese Woche am meisten gelernt? Setzt sich jeden Montag um 00:00 zurück.</div>
+        <div class="lbWrap">
+          <div class="lbHeadRow">
+            <div class="lbWeekInfo" id="lbWeekInfo"></div>
+            <button type="button" class="btn neutral lbRefreshBtn" id="lbRefreshBtn" aria-label="Aktualisieren" title="Aktualisieren">↻ Aktualisieren</button>
+          </div>
+          <div class="lbList" id="lbList" role="list"></div>
+          <div class="lbEmpty" id="lbEmpty" style="display:none;"></div>
+          <div class="lbHint" id="lbHint" style="display:none;">Du erscheinst im Leaderboard, sobald du diese Woche mindestens <strong>1 Stunde</strong> gelernt hast.</div>
+        </div>
+      </section>
+
+      <!-- ───────── TO-DO VIEW ───────── -->
+      <section class="view" id="todoView">
+        <div class="sectionTitle">To-Do</div>
+        <div class="statsNote">
+          Aufgaben in der Inbox sammeln und per Drag &amp; Drop in ein Intervall ziehen.
+          Mit <strong>#Projektname</strong> (z.B. <em>#Mathe</em>) wird die Aufgabe automatisch farbig markiert.
+        </div>
+        <div class="todoWrap">
+          <div class="todoSummary" id="todoSummary"></div>
+
+          <!-- ── INBOX ── -->
+          <div class="todoSectionTitle">📥 Inbox</div>
+          <div class="todoBucket inboxBucket" id="todoInbox" data-key="inbox">
+            <div class="todoAddRow">
+              <input type="text" id="todoInboxInput" class="todoBucketInput" placeholder="Neue Aufgabe (z.B. #Mathe Übungen Kapitel 3)" maxlength="120" autocomplete="off" />
+              <button type="button" id="todoInboxAddBtn" class="todoBucketAddBtn" aria-label="Aufgabe hinzufügen">+</button>
+            </div>
+            <ul class="todoBucketList" id="todoInboxList" data-key="inbox"></ul>
+          </div>
+
+          <!-- ── INTERVAL BUCKETS (4 per row) ── -->
+          <div class="todoSectionTitle">🎯 Intervalle</div>
+          <div class="todoIntervalGrid" id="todoIntervalGrid"></div>
+
+          <!-- ── PROJECTS OVERVIEW ── -->
+          <div class="todoSectionTitle">🏷 Projekte</div>
+          <div class="todoProjects" id="todoProjects"></div>
+        </div>
+      </section>
+
+      <!-- ───────── SETTINGS VIEW ───────── -->
+      <section class="view" id="settingsView">
+        <div class="sectionTitle">Einstellungen</div>
+        <div class="statsNote">Zeitintervalle individuell anpassen</div>
+
+        <!-- ── SUB-TABS ── -->
+        <div class="subTabs" role="tablist">
+          <button type="button" class="subTab active" id="subTabIntervals" data-subtab="intervals" role="tab">Intervall-Einstellungen</button>
+          <button type="button" class="subTab" id="subTabProfile" data-subtab="profile" role="tab">Profileinstellungen</button>
+        </div>
+
+        <!-- ── SUB-VIEW: Intervall-Einstellungen ── -->
+        <div class="subView active" id="subViewIntervals">
+
+          <!-- Template manager -->
+          <div class="cardOuter settingsCard" style="margin-bottom:14px;">
+            <div class="card" style="width:100%;">
+              <div class="templatesHead">
+                <div>
+                  <div class="settingTitle">Vorlagen</div>
+                  <div class="settingSub" id="templatesHint">Bis zu 10 Vorlagen. Wähle eine aus, um ihre Einstellungen zu laden.</div>
+                </div>
+                <button type="button" class="templateAddBtn" id="templateAddBtn" aria-label="Neue Vorlage" title="Neue Vorlage anlegen">+</button>
+              </div>
+              <div class="templatesList" id="templatesList"></div>
+            </div>
+          </div>
+
+          <!-- Settings of the active template -->
+          <div class="cardOuter settingsCard">
+            <div class="card" style="width:100%;">
+              <div class="activeTemplateHead">
+                <span class="activeTemplateLabel">Bearbeite:</span>
+                <input type="text" class="activeTemplateName" id="activeTemplateName" placeholder="Vorlagenname" maxlength="40" />
+              </div>
+              <div class="settingRow">
+                <div>
+                  <div class="settingTitle">Lernziel pro Tag</div>
+                  <div class="settingSub">Wie viel möchtest du heute lernen?</div>
+                </div>
+                <div class="goalRow">
+                  <input type="number" id="goal_value_input" class="goalInput" min="1" step="1" value="4" />
+                  <div class="unitToggle" id="goal_unit_toggle">
+                    <button type="button" data-unit="h" class="active">h</button>
+                    <button type="button" data-unit="min">min</button>
+                  </div>
+                </div>
+              </div>
+              <div class="settingRow">
+                <div>
+                  <div class="settingTitle">Länge eines Lernintervalls</div>
+                  <div class="settingSub">Dauer einer Lernsession in Minuten</div>
+                </div>
+                <div class="stepper">
+                  <button data-key="learn_min" data-delta="-1">−</button>
+                  <div class="num" id="learn_min_num"></div>
+                  <button data-key="learn_min" data-delta="1">+</button>
+                </div>
+              </div>
+              <div class="settingRow computedRow">
+                <div>
+                  <div class="settingTitle">Anzahl Lernintervalle</div>
+                  <div class="settingSub" id="intervals_explain">Lernziel ÷ Intervalldauer</div>
+                </div>
+                <div class="computedNum" id="intervals_num">8</div>
+              </div>
+              <div class="settingRow">
+                <div>
+                  <div class="settingTitle">Kleine Pausen</div>
+                  <div class="settingSub">Pausen #1, #3, #5, … (Minuten)</div>
+                </div>
+                <div class="stepper">
+                  <button data-key="break_odd_min" data-delta="-1">−</button>
+                  <div class="num" id="break_odd_min_num"></div>
+                  <button data-key="break_odd_min" data-delta="1">+</button>
+                </div>
+              </div>
+              <div class="settingRow">
+                <div>
+                  <div class="settingTitle">Große Pausen</div>
+                  <div class="settingSub">Pausen #2, #4, #6, … (Minuten)</div>
+                </div>
+                <div class="stepper">
+                  <button data-key="break_even_min" data-delta="-1">−</button>
+                  <div class="num" id="break_even_min_num"></div>
+                  <button data-key="break_even_min" data-delta="1">+</button>
+                </div>
+              </div>
+              <div class="settingRow">
+                <div>
+                  <div class="settingTitle">Ganz große Pause aktivieren</div>
+                  <div class="settingSub">Ersetzt regelmäßig eine Standard-Pause durch eine längere</div>
+                </div>
+                <button class="toggleSwitch" id="bigBreakToggle" type="button" aria-pressed="true">
+                  <span class="track"><span class="thumb"></span></span>
+                </button>
+              </div>
+              <div class="settingRow bigBreakRow" id="bigBreakRowAfter">
+                <div>
+                  <div class="settingTitle">Nach wie vielen Intervallen</div>
+                  <div class="settingSub">Jede N-te Pause wird zur ganz großen Pause</div>
+                </div>
+                <div class="stepper">
+                  <button data-key="big_break_after" data-delta="-1">−</button>
+                  <div class="num" id="big_break_after_num"></div>
+                  <button data-key="big_break_after" data-delta="1">+</button>
+                </div>
+              </div>
+              <div class="settingRow bigBreakRow" id="bigBreakRowMin">
+                <div>
+                  <div class="settingTitle">Dauer der ganz großen Pause</div>
+                  <div class="settingSub">Länge in Minuten (Schritte à 5)</div>
+                </div>
+                <div class="stepper">
+                  <button data-key="big_break_min" data-delta="-5">−</button>
+                  <div class="num" id="big_break_min_num"></div>
+                  <button data-key="big_break_min" data-delta="5">+</button>
+                </div>
+              </div>
+              <div class="btnRow" style="margin-top:16px;">
+                <button class="btn primary" id="saveSettingsBtn">Speichern</button>
+                <button class="btn neutral" id="defaultsBtn">Auf Standard zurücksetzen</button>
+              </div>
+              <div class="savedMsg" id="savedMsg"></div>
+            </div>
+          </div>
+          <div class="settingsFooter" id="totalInfo"></div>
+        </div>
+
+        <!-- ── SUB-VIEW: Profileinstellungen ── -->
+        <div class="subView" id="subViewProfile" style="display:none;">
+          <div class="cardOuter settingsCard">
+            <div class="card" style="width:100%;">
+              <!-- Avatar -->
+              <div class="settingRow profileAvatarRow">
+                <div>
+                  <div class="settingTitle">Profilbild</div>
+                  <div class="settingSub">Wähle ein Icon, deine Initialen oder lade ein Bild hoch.</div>
+                </div>
+                <div class="profileAvatarWrap">
+                  <div class="profileAvatarBig" id="profileAvatarBig"></div>
+                  <button type="button" class="btn neutral" id="profileAvatarChangeBtn">Ändern</button>
+                </div>
+              </div>
+              <div class="settingRow">
+                <div>
+                  <div class="settingTitle">Nutzername</div>
+                  <div class="settingSub" id="profileUsernameSub">4–10 Buchstaben. Änderungen sind nur einmal pro Woche möglich.</div>
+                </div>
+                <div class="profileUsernameWrap">
+                  <input type="text" id="profileUsernameInput" class="profileUsernameInput" maxlength="10" placeholder="—" autocomplete="off" />
+                  <button type="button" class="btn primary profileUsernameSave" id="profileUsernameSave">Speichern</button>
+                  <div class="profileUsernameMsg" id="profileUsernameMsg"></div>
+                </div>
+              </div>
+              <div class="settingRow">
+                <div>
+                  <div class="settingTitle">E-Mail</div>
+                  <div class="settingSub">Die für deinen Account hinterlegte E-Mail-Adresse</div>
+                </div>
+                <div class="profileEmailWrap">
+                  <div class="profileEmail" id="profileEmail">—</div>
+                  <button type="button" class="btn neutral profileEmailEdit" id="profileEmailEditBtn">Ändern</button>
+                </div>
+              </div>
+              <div class="settingRow">
+                <div>
+                  <div class="settingTitle">Passwort</div>
+                  <div class="settingSub">Setze ein neues Passwort. Du musst dein aktuelles Passwort bestätigen.</div>
+                </div>
+                <button type="button" class="btn neutral" id="profilePasswordEditBtn">Passwort ändern</button>
+              </div>
+              <div class="settingRow">
+                <div>
+                  <div class="settingTitle">Darstellung</div>
+                  <div class="settingSub">Wähle zwischen heller und dunkler Oberfläche</div>
+                </div>
+                <div class="themeChoice" id="themeChoice" role="group" aria-label="Darstellung">
+                  <button type="button" class="themeChoiceBtn" data-theme="dark" id="themeChoiceDark">🌙 Dark</button>
+                  <button type="button" class="themeChoiceBtn" data-theme="light" id="themeChoiceLight">☀ Light</button>
+                </div>
+              </div>
+              <div class="settingRow">
+                <div>
+                  <div class="settingTitle">Onboarding neu starten</div>
+                  <div class="settingSub">Zeige die Willkommenstour beim nächsten Login erneut</div>
+                </div>
+                <button type="button" class="btn neutral" id="replayOnboardingBtn">Tour anzeigen</button>
+              </div>
+
+              <div class="dangerZone">
+                <div class="dangerZoneTitle">⚠ Gefahrenzone</div>
+                <div class="dangerZoneSub">
+                  Hier kannst du deinen gesamten Fortschritt löschen. Timer-Einstellungen, Theme und Sound-Einstellungen bleiben erhalten.
+                </div>
+                <button class="btn dangerOutline" id="resetProgressBtn">Fortschritt zurücksetzen</button>
+                <button class="btn danger" id="deleteAccountBtn" style="margin-left:8px;">Account endgültig löschen</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ── LEGAL FOOTER — always visible, even when app is blurred / before login ── -->
+  <footer class="legalFooter">
+    <button type="button" class="legalFooterLink" id="openImprintBtn">Impressum</button>
+    <span class="legalFooterSep">·</span>
+    <button type="button" class="legalFooterLink" id="openPrivacyBtn">Datenschutz</button>
+  </footer>
+
+  <div class="tooltip" id="tooltip"></div>
+
+  <div class="compactOverlay" id="compactOverlay">
+    <div class="compactWin" id="compactWin">
+      <div class="compactTopBar" id="compactTopBar"></div>
+      <div class="compactInner">
+        <div class="compactTimer" id="compactTimer">30:00</div>
+        <div class="compactStatus" id="compactStatus">Bereit</div>
+        <div class="compactStar" id="compactStar" style="display:none;"><span class="starGlyph">★</span><span id="compactStarText"></span></div>
+        <div class="compactSep"></div>
+        <div class="compactRow">
+          <button class="mini" id="compactToggle">▶</button>
+          <button class="mini neutral" id="compactExit">⊞ Vollbild</button>
+          <button class="mini close" id="compactClose">✕</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── REWARD MODAL ── -->
+  <div class="rewardModal" id="rewardModal" aria-hidden="true">
+    <div class="rewardModalCard" role="dialog" aria-modal="true">
+      <div class="rewardTitle">🎲 Belohnungs-Würfel</div>
+      <div class="rewardSub" id="rewardSub">Würfle für deine Punkte!</div>
+      <div class="rewardDiceWrap">
+        <div id="rewardDie" class="die small" aria-label="Belohnungs-Würfel">
+          <span class="pip tl"></span><span class="pip tr"></span>
+          <span class="pip ml"></span><span class="pip mr"></span>
+          <span class="pip c"></span>
+          <span class="pip bl"></span><span class="pip br"></span>
+        </div>
+      </div>
+      <div class="rewardRolls" id="rewardRolls">Verbleibende Würfe: 0</div>
+      <div class="rewardEarned" id="rewardEarned">&nbsp;</div>
+      <div class="rewardBtnRow">
+        <button class="btn primary" id="rewardRollBtn">Würfeln</button>
+        <button class="btn neutral" id="rewardCloseBtn">Schließen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── EXACT MODE MODAL ── -->
+  <div class="choiceModal" id="exactModal" aria-hidden="true">
+    <div class="choiceCard" role="dialog" aria-modal="true">
+      <div class="choiceCloseRow"><button class="choiceCloseBtn" id="closeExact" type="button">Schließen</button></div>
+      <h2>Würfelzahl auswählen</h2>
+      <p>Triffst du die genaue Zahl → <strong>5.4×</strong> (+ Streak-Bonus)</p>
+      <div class="diceOptions">
+        <button class="diceOption" data-value="1" type="button">⚀<span>1</span></button>
+        <button class="diceOption" data-value="2" type="button">⚁<span>2</span></button>
+        <button class="diceOption" data-value="3" type="button">⚂<span>3</span></button>
+        <button class="diceOption" data-value="4" type="button">⚃<span>4</span></button>
+        <button class="diceOption" data-value="5" type="button">⚄<span>5</span></button>
+        <button class="diceOption" data-value="6" type="button">⚅<span>6</span></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ODD/EVEN MODAL ── -->
+  <div class="choiceModal" id="oeModal" aria-hidden="true">
+    <div class="choiceCard" role="dialog" aria-modal="true">
+      <div class="choiceCloseRow"><button class="choiceCloseBtn" id="closeOE" type="button">Schließen</button></div>
+      <h2>Gerade oder Ungerade?</h2>
+      <p>Liegst du richtig → <strong>1.85×</strong> (+ Streak-Bonus)</p>
+      <div class="oeOptions">
+        <button class="oeOption" data-value="even" type="button">
+          <span class="oeIcon">⚁⚃⚅</span>
+          <span>Gerade</span>
+          <span class="oeNumbers">2 · 4 · 6</span>
+        </button>
+        <button class="oeOption" data-value="odd" type="button">
+          <span class="oeIcon">⚀⚂⚄</span>
+          <span>Ungerade</span>
+          <span class="oeNumbers">1 · 3 · 5</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="confirmModal" id="confirmResetModal" aria-hidden="true">
+    <div class="confirmCard" role="dialog" aria-modal="true">
+      <div class="confirmIcon">⚠️</div>
+      <div class="confirmTitle">Wirklich zurücksetzen?</div>
+      <div class="confirmText">Möchtest du deinen gesamten Fortschritt wirklich löschen? Das kann nicht rückgängig gemacht werden.</div>
+      <ul class="confirmList">
+        <li>Alle Lerneinheiten von heute</li>
+        <li>Komplette Lernhistorie & Heatmap</li>
+        <li>Punkte und offene Würfe</li>
+        <li>Streak im Würfelspiel</li>
+        <li>Laufender Timer</li>
+      </ul>
+      <div class="confirmText" style="font-size:12.5px;margin-bottom:14px;">Erhalten bleiben: Timer-Einstellungen (Dauer), Theme, Sound.</div>
+      <div class="confirmBtnRow">
+        <button class="btn neutral" id="confirmResetCancel">Abbrechen</button>
+        <button class="btn danger" id="confirmResetYes">Ja, löschen</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dicePopover" id="dicePopover" aria-hidden="true">
+    <div class="dicePopHeader">Würfel-Timer</div>
+    <div class="dicePopTime" id="dicePopTime">30:00</div>
+    <div class="dicePopBar"><div class="dicePopFill" id="dicePopFill"></div></div>
+    <div class="dicePopState" id="dicePopState">Pausiert</div>
+  </div>
+
+  <div class="taskPopover" id="taskPopover" role="dialog" aria-label="Aufgaben für Lerneinheit">
+    <div class="taskPopHeader" id="taskPopHeader">Lerneinheit</div>
+    <ul class="taskList" id="taskList"></ul>
+    <div class="taskEmpty" id="taskEmpty" style="display:none;">Noch keine Aufgaben — füge unten welche hinzu.</div>
+    <div class="taskAddRow">
+      <input type="text" id="taskInput" class="taskInput" placeholder="Aufgabe…" maxlength="120" />
+      <button type="button" id="taskAddBtn" class="taskAddBtn" aria-label="Aufgabe hinzufügen">+</button>
+    </div>
+    <div class="taskHint" id="taskHint">0 / 10 Aufgaben</div>
+  </div>
+
+  <div class="confetti" id="confetti"></div>
+
+  <!-- ── AUTH MODAL ── -->
+  <div class="authModal" id="authModal" aria-hidden="true">
+    <div class="authCard" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+      <div class="authBrand">📚 Proko</div>
+      <div class="authTabs" role="tablist">
+        <button type="button" class="authTab active" id="authTabLogin" data-mode="login" role="tab">Einloggen</button>
+        <button type="button" class="authTab" id="authTabRegister" data-mode="register" role="tab">Neuer Account</button>
+      </div>
+      <h2 class="authTitle" id="authTitle">Willkommen zurück</h2>
+      <div class="authSub" id="authSub">Melde dich an, um deinen Fortschritt überall zu sehen.</div>
+      <div class="authField" id="authUsernameField" style="display:none;">
+        <label for="authUsername">Nutzername</label>
+        <input type="text" id="authUsername" autocomplete="username" placeholder="4–10 Buchstaben (a–z, A–Z)" maxlength="10" />
+        <div class="authFieldHint" id="authUsernameHint">Nur Buchstaben, keine Zahlen oder Sonderzeichen.</div>
+      </div>
+      <div class="authField" id="authEmailField">
+        <label for="authEmail" id="authEmailLabel">E-Mail</label>
+        <input type="text" id="authEmail" autocomplete="email" placeholder="du@beispiel.de" />
+      </div>
+      <div class="authField">
+        <label for="authPassword">Passwort</label>
+        <input type="password" id="authPassword" autocomplete="current-password" placeholder="Mindestens 6 Zeichen" />
+      </div>
+      <button type="button" class="authForgotLink" id="authForgotLink">Passwort vergessen?</button>
+      <div class="authError" id="authError"></div>
+      <div class="authNote" id="authNote"></div>
+      <button class="btn primary authSubmit" id="authSubmit" type="button">Einloggen</button>
+      <div class="authBusy" id="authBusy" style="display:none;"><div class="spinner small"></div><span>Bitte warten…</span></div>
+      <div class="authDivider"><span>oder</span></div>
+      <button type="button" class="authGuestBtn" id="authGuestBtn">Ohne Anmeldung fortfahren</button>
+      <div class="authGuestNote">Im Gast-Modus wird nichts gespeichert — alle Änderungen sind beim nächsten Besuch weg.</div>
+    </div>
+  </div>
+
+  <!-- ── LOADING OVERLAY (during cloud sync / startup) ── -->
+  <div class="loadingOverlay" id="loadingOverlay" aria-hidden="true">
+    <div class="loadingBox">
+      <div class="spinner"></div>
+      <div class="loadingText" id="loadingText">Lade…</div>
+    </div>
+  </div>
+
+  <!-- ── IMPRESSUM MODAL ── -->
+  <div class="legalModal" id="imprintModal" aria-hidden="true">
+    <div class="legalCard" role="dialog" aria-modal="true">
+      <div class="legalHead">
+        <h2>Impressum</h2>
+        <button type="button" class="legalClose" id="closeImprintBtn" aria-label="Schließen">✕</button>
+      </div>
+      <div class="legalBody">
+        <p><strong>Angaben gemäß § 5 DDG (Digitale-Dienste-Gesetz):</strong></p>
+        <p>
+          Telos<br>
+          Finn Philipp Bronnhuber<br>
+          Edith-Stein-Ring 43<br>
+          Deutschland
+        </p>
+        <p><strong>Vertreten durch:</strong><br>Finn Philipp Bronnhuber</p>
+        <p><strong>Kontakt:</strong><br>E-Mail: <a href="mailto:finn.bronnhuber@outlook.de">finn.bronnhuber@outlook.de</a></p>
+        <p><strong>Verantwortlich für den Inhalt nach § 18 Abs. 2 MStV:</strong><br>
+          Finn Philipp Bronnhuber<br>Edith-Stein-Ring 43</p>
+        <h3>Haftung für Inhalte</h3>
+        <p>Als Diensteanbieter sind wir gemäß § 7 Abs. 1 DDG für eigene Inhalte auf diesen Seiten nach den
+          allgemeinen Gesetzen verantwortlich. Nach §§ 8 bis 10 DDG sind wir als Diensteanbieter jedoch nicht
+          verpflichtet, übermittelte oder gespeicherte fremde Informationen zu überwachen oder nach Umständen
+          zu forschen, die auf eine rechtswidrige Tätigkeit hinweisen. Verpflichtungen zur Entfernung oder
+          Sperrung der Nutzung von Informationen nach den allgemeinen Gesetzen bleiben hiervon unberührt.
+          Eine diesbezügliche Haftung ist jedoch erst ab dem Zeitpunkt der Kenntnis einer konkreten
+          Rechtsverletzung möglich. Bei Bekanntwerden von entsprechenden Rechtsverletzungen werden wir diese
+          Inhalte umgehend entfernen.</p>
+        <h3>Haftung für Links</h3>
+        <p>Unser Angebot enthält gegebenenfalls Links zu externen Webseiten Dritter, auf deren Inhalte wir
+          keinen Einfluss haben. Deshalb können wir für diese fremden Inhalte auch keine Gewähr übernehmen.
+          Für die Inhalte der verlinkten Seiten ist stets der jeweilige Anbieter oder Betreiber der Seiten
+          verantwortlich. Die verlinkten Seiten wurden zum Zeitpunkt der Verlinkung auf mögliche Rechts-
+          verstöße überprüft. Rechtswidrige Inhalte waren zum Zeitpunkt der Verlinkung nicht erkennbar.
+          Eine permanente inhaltliche Kontrolle der verlinkten Seiten ist jedoch ohne konkrete Anhaltspunkte
+          einer Rechtsverletzung nicht zumutbar. Bei Bekanntwerden von Rechtsverletzungen werden wir
+          derartige Links umgehend entfernen.</p>
+        <h3>Urheberrecht</h3>
+        <p>Die durch die Seitenbetreiber erstellten Inhalte und Werke auf diesen Seiten unterliegen dem
+          deutschen Urheberrecht. Die Vervielfältigung, Bearbeitung, Verbreitung und jede Art der Verwertung
+          außerhalb der Grenzen des Urheberrechtes bedürfen der schriftlichen Zustimmung des jeweiligen
+          Autors bzw. Erstellers. Downloads und Kopien dieser Seite sind nur für den privaten, nicht
+          kommerziellen Gebrauch gestattet.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── DATENSCHUTZ MODAL ── -->
+  <div class="legalModal" id="privacyModal" aria-hidden="true">
+    <div class="legalCard" role="dialog" aria-modal="true">
+      <div class="legalHead">
+        <h2>Datenschutzerklärung</h2>
+        <button type="button" class="legalClose" id="closePrivacyBtn" aria-label="Schließen">✕</button>
+      </div>
+      <div class="legalBody">
+        <h3>1. Verantwortlicher</h3>
+        <p>Verantwortlich für die Datenverarbeitung auf dieser Website ist:<br>
+          Telos — Finn Philipp Bronnhuber<br>
+          Edith-Stein-Ring 43<br>
+          E-Mail: <a href="mailto:finn.bronnhuber@outlook.de">finn.bronnhuber@outlook.de</a></p>
+
+        <h3>2. Erhebung und Verarbeitung personenbezogener Daten</h3>
+        <p>Wir verarbeiten personenbezogene Daten nur dann, wenn dies zur Bereitstellung einer
+          funktionsfähigen Website sowie unserer Inhalte und Leistungen erforderlich ist. Die Verarbeitung
+          erfolgt regelmäßig auf Basis Ihrer Einwilligung (Art. 6 Abs. 1 lit. a DSGVO) oder zur Erfüllung
+          eines Vertrags bzw. vorvertraglicher Maßnahmen (Art. 6 Abs. 1 lit. b DSGVO).</p>
+
+        <h3>3. Registrierung und Login</h3>
+        <p>Bei der Registrierung speichern wir Ihre E-Mail-Adresse und ein verschlüsseltes Passwort, um Ihnen
+          den Zugang zu Ihren persönlichen Lerndaten zu ermöglichen. Diese Daten werden ausschließlich für
+          den Login und die Wiederherstellung des Passworts verwendet. Es ist auch möglich, die Anwendung
+          ohne Anmeldung als Gast zu nutzen — in diesem Fall werden keinerlei Daten gespeichert.</p>
+
+        <h3>4. Gespeicherte Lerndaten</h3>
+        <p>Wenn Sie angemeldet sind, speichern wir Ihren Lernfortschritt (z.B. Lernintervalle, Aufgaben,
+          Punkte, Statistiken) in unserer Datenbank. Diese Daten dienen ausschließlich der Funktion der
+          App und werden nicht an Dritte weitergegeben.</p>
+
+        <h3>5. Hosting & Datenbank (Supabase)</h3>
+        <p>Wir nutzen den Dienst Supabase (Supabase Inc.) zur Authentifizierung und zur Speicherung Ihrer
+          Daten. Beim Aufruf der Seite werden technische Daten (z.B. IP-Adresse, Zeitstempel) an Supabase
+          übertragen. Weitere Informationen finden Sie in der Datenschutzerklärung von Supabase unter
+          <a href="https://supabase.com/privacy" target="_blank" rel="noopener">supabase.com/privacy</a>.</p>
+
+        <h3>6. Speicherdauer</h3>
+        <p>Ihre Daten werden so lange gespeichert, wie Ihr Konto besteht. Sie können Ihren Account und alle
+          damit verbundenen Daten jederzeit selbst löschen (siehe Einstellungen → Gefahrenzone → "Account
+          endgültig löschen"). Mit der Löschung werden sämtliche personenbezogenen Daten unwiderruflich
+          entfernt.</p>
+
+        <h3>7. Ihre Rechte</h3>
+        <p>Sie haben gemäß DSGVO das Recht auf:</p>
+        <ul>
+          <li>Auskunft über die zu Ihrer Person gespeicherten Daten (Art. 15)</li>
+          <li>Berichtigung unrichtiger Daten (Art. 16)</li>
+          <li>Löschung Ihrer Daten (Art. 17, "Recht auf Vergessen")</li>
+          <li>Einschränkung der Verarbeitung (Art. 18)</li>
+          <li>Datenübertragbarkeit (Art. 20)</li>
+          <li>Widerspruch gegen die Verarbeitung (Art. 21)</li>
+          <li>Beschwerde bei einer Aufsichtsbehörde (Art. 77)</li>
+        </ul>
+        <p>Zur Wahrnehmung Ihrer Rechte wenden Sie sich bitte per E-Mail an die oben genannte Adresse.</p>
+
+        <h3>8. Cookies und lokaler Speicher</h3>
+        <p>Diese Website verwendet ausschließlich technisch notwendige Cookies bzw. Browser-Speicher
+          (localStorage) zur Aufrechterhaltung Ihrer Login-Sitzung und zur lokalen Zwischenspeicherung
+          Ihres Fortschritts. Es findet kein Tracking und keine Weitergabe an Dritte zu Werbezwecken statt.</p>
+
+        <h3>9. SSL-Verschlüsselung</h3>
+        <p>Diese Seite nutzt aus Sicherheitsgründen eine SSL-Verschlüsselung. Eine verschlüsselte Verbindung
+          erkennen Sie daran, dass die Adresszeile des Browsers mit „https://" beginnt.</p>
+
+        <h3>10. Änderungen dieser Datenschutzerklärung</h3>
+        <p>Wir behalten uns vor, diese Datenschutzerklärung anzupassen, damit sie stets den aktuellen
+          rechtlichen Anforderungen entspricht. Die jeweils aktuelle Fassung gilt ab Veröffentlichung.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ACCOUNT-DELETE CONFIRMATION (two-step) ── -->
+  <div class="confirmModal" id="deleteAccountModal" aria-hidden="true">
+    <div class="confirmCard" role="dialog" aria-modal="true">
+      <div class="confirmIcon">⚠️</div>
+      <div class="confirmTitle">Account endgültig löschen?</div>
+      <div class="confirmText">Diese Aktion löscht <strong>unwiderruflich</strong>:</div>
+      <ul class="confirmList">
+        <li>Deinen Account und deine E-Mail-Anmeldung</li>
+        <li>Alle Lernstatistiken, Punkte und Streaks</li>
+        <li>Alle Aufgaben und To-Do-Listen</li>
+        <li>Deinen kompletten gespeicherten Fortschritt in der Cloud</li>
+      </ul>
+      <div class="confirmText" style="font-size:12.5px;margin-bottom:10px;">
+        Zur Bestätigung tippe bitte unten dein Passwort ein:
+      </div>
+      <input type="password" id="deleteAccountPassword" class="goalInput" style="width:100%;font-family:inherit;font-weight:500;text-align:left;margin-bottom:10px;" placeholder="Aktuelles Passwort" autocomplete="current-password" />
+      <div class="authError" id="deleteAccountError"></div>
+      <div class="confirmBtnRow">
+        <button class="btn neutral" id="deleteAccountCancel">Abbrechen</button>
+        <button class="btn danger"  id="deleteAccountConfirm">Account jetzt löschen</button>
+      </div>
+      <div class="authBusy" id="deleteAccountBusy" style="display:none;"><div class="spinner small"></div><span>Lösche…</span></div>
+    </div>
+  </div>
+
+  <!-- ── AVATAR PICKER ── -->
+  <div class="avatarModal" id="avatarModal" aria-hidden="true">
+    <div class="avatarCard" role="dialog" aria-modal="true">
+      <div class="avatarHead">
+        <h2>Profilbild wählen</h2>
+        <button type="button" class="legalClose" id="avatarCloseBtn" aria-label="Schließen">✕</button>
+      </div>
+      <div class="avatarTabs">
+        <button type="button" class="avatarTab active" data-tab="emoji" id="avatarTabEmoji">Icon</button>
+        <button type="button" class="avatarTab" data-tab="initial" id="avatarTabInitial">Initialen</button>
+        <button type="button" class="avatarTab" data-tab="image" id="avatarTabImage">Bild</button>
+      </div>
+      <!-- Tab: Emoji-Auswahl -->
+      <div class="avatarPane" id="avatarPaneEmoji"></div>
+      <!-- Tab: Initial-Farben -->
+      <div class="avatarPane" id="avatarPaneInitial" style="display:none;">
+        <div class="avatarInitialPreview" id="avatarInitialPreview"></div>
+        <div class="avatarColorGrid" id="avatarColorGrid"></div>
+      </div>
+      <!-- Tab: Bild-Upload -->
+      <div class="avatarPane" id="avatarPaneImage" style="display:none;">
+        <div class="avatarUploadPreview" id="avatarUploadPreview"></div>
+        <input type="file" id="avatarFileInput" accept="image/*" style="display:none;" />
+        <button type="button" class="btn neutral" id="avatarPickFileBtn">Datei auswählen…</button>
+        <div class="avatarUploadHint">JPG/PNG, wird automatisch auf 256 × 256 verkleinert.</div>
+        <div class="authError" id="avatarUploadError"></div>
+      </div>
+      <div class="qBtns">
+        <button type="button" class="btn neutral" id="avatarCancelBtn">Abbrechen</button>
+        <button type="button" class="btn primary" id="avatarSaveBtn">Speichern</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── EMAIL CHANGE ── -->
+  <div class="confirmModal" id="emailChangeModal" aria-hidden="true">
+    <div class="confirmCard" role="dialog" aria-modal="true">
+      <div class="confirmIcon">✉</div>
+      <div class="confirmTitle">E-Mail-Adresse ändern</div>
+      <div class="confirmText">Du bekommst eine Bestätigungsmail an die neue Adresse. Die alte bleibt aktiv, bis du den Link klickst.</div>
+      <div class="authField">
+        <label for="emailChangeNew">Neue E-Mail-Adresse</label>
+        <input type="email" id="emailChangeNew" placeholder="neu@beispiel.de" autocomplete="email" />
+      </div>
+      <div class="authField">
+        <label for="emailChangePassword">Aktuelles Passwort (zur Bestätigung)</label>
+        <input type="password" id="emailChangePassword" autocomplete="current-password" />
+      </div>
+      <div class="authError" id="emailChangeError"></div>
+      <div class="authNote" id="emailChangeNote"></div>
+      <div class="confirmBtnRow">
+        <button type="button" class="btn neutral" id="emailChangeCancel">Abbrechen</button>
+        <button type="button" class="btn primary" id="emailChangeSubmit">Bestätigungsmail senden</button>
+      </div>
+      <div class="authBusy" id="emailChangeBusy" style="display:none;"><div class="spinner small"></div><span>Sende…</span></div>
+    </div>
+  </div>
+
+  <!-- ── PASSWORD CHANGE ── -->
+  <div class="confirmModal" id="passwordChangeModal" aria-hidden="true">
+    <div class="confirmCard" role="dialog" aria-modal="true">
+      <div class="confirmIcon">🔒</div>
+      <div class="confirmTitle">Passwort ändern</div>
+      <div class="confirmText">Bestätige dein aktuelles Passwort und wähle ein neues.</div>
+      <div class="authField">
+        <label for="pwChangeOld">Aktuelles Passwort</label>
+        <input type="password" id="pwChangeOld" autocomplete="current-password" />
+      </div>
+      <div class="authField">
+        <label for="pwChangeNew">Neues Passwort</label>
+        <input type="password" id="pwChangeNew" autocomplete="new-password" placeholder="Mindestens 6 Zeichen" />
+      </div>
+      <div class="authField">
+        <label for="pwChangeNew2">Neues Passwort wiederholen</label>
+        <input type="password" id="pwChangeNew2" autocomplete="new-password" />
+      </div>
+      <div class="authError" id="pwChangeError"></div>
+      <div class="authNote" id="pwChangeNote"></div>
+      <div class="confirmBtnRow">
+        <button type="button" class="btn neutral" id="pwChangeCancel">Abbrechen</button>
+        <button type="button" class="btn primary" id="pwChangeSubmit">Passwort speichern</button>
+      </div>
+      <div class="authBusy" id="pwChangeBusy" style="display:none;"><div class="spinner small"></div><span>Speichere…</span></div>
+    </div>
+  </div>
+
+  <!-- ── USERNAME REQUIRED (existing accounts without a username must set one before continuing) ── -->
+  <div class="usernameReqModal" id="usernameReqModal" aria-hidden="true">
+    <div class="usernameReqCard" role="dialog" aria-modal="true">
+      <div class="onboardEmoji">👋</div>
+      <h2 class="usernameReqTitle">Wähle deinen Nutzernamen</h2>
+      <p class="usernameReqSub">Du brauchst einen Nutzernamen, um die App zu verwenden. 4–10 Buchstaben (a–z, A–Z), keine Zahlen oder Sonderzeichen.</p>
+      <div class="authField">
+        <label for="usernameReqInput">Nutzername</label>
+        <input type="text" id="usernameReqInput" maxlength="10" placeholder="z.B. Mira" autocomplete="username" />
+      </div>
+      <div class="authError" id="usernameReqError"></div>
+      <div class="qBtns">
+        <button type="button" class="btn primary" id="usernameReqSubmit">Nutzernamen festlegen</button>
+      </div>
+      <div class="authBusy" id="usernameReqBusy" style="display:none;"><div class="spinner small"></div><span>Speichern…</span></div>
+    </div>
+  </div>
+
+  <!-- ── FLOW PAUSE PROMPT ── -->
+  <div class="flowPauseModal" id="flowPauseModal" aria-hidden="true">
+    <div class="flowPauseCard" role="dialog" aria-modal="true">
+      <div class="onboardEmoji">🌊</div>
+      <div class="flowPauseTitle" id="flowPauseTitle">Zeit für eine Pause?</div>
+      <div class="flowPauseSub" id="flowPauseSub">Du hast gerade — Minuten gelernt. Wie lange möchtest du pausieren?</div>
+      <div class="flowPauseRow">
+        <input type="range" id="flowPauseRange" class="flowPauseRange" min="1" max="30" step="1" value="10" aria-label="Pausen-Dauer" />
+        <div class="flowPauseValue"><span id="flowPauseMins">10</span> Min</div>
+      </div>
+      <div class="flowPauseQuickRow" id="flowPauseQuickRow">
+        <button type="button" class="flowPauseQuick" data-mins="5">5 Min</button>
+        <button type="button" class="flowPauseQuick" data-mins="10">10 Min</button>
+        <button type="button" class="flowPauseQuick" data-mins="15">15 Min</button>
+        <button type="button" class="flowPauseQuick" data-mins="20">20 Min</button>
+        <button type="button" class="flowPauseQuick" data-mins="30">30 Min</button>
+      </div>
+      <div class="flowPauseBtns">
+        <button type="button" class="btn neutral" id="flowPauseCancel">Abbrechen</button>
+        <button type="button" class="btn neutral" id="flowPauseNone">Keine Pause</button>
+        <button type="button" class="btn primary" id="flowPauseStart">Pause starten</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── INTERVAL DURATION PROMPT (used for "add new interval") ── -->
+  <div class="promptModal" id="intervalPromptModal" aria-hidden="true">
+    <div class="promptCard" role="dialog" aria-modal="true">
+      <div class="promptTitle" id="intervalPromptTitle">Neues Lernintervall</div>
+      <div class="promptSub" id="intervalPromptSub">Wie viele Minuten soll dieses Intervall gehen?</div>
+      <input type="number" id="intervalPromptInput" class="promptInput" min="5" max="240" step="5" value="30" />
+      <div class="promptBtns">
+        <button type="button" class="btn neutral" id="intervalPromptCancel">Abbrechen</button>
+        <button type="button" class="btn primary" id="intervalPromptOk">Hinzufügen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── INITIAL QUESTIONNAIRE (after first sign-up / always for guests) ── -->
+  <div class="questionnaireModal" id="questionnaireModal" aria-hidden="true">
+    <div class="questionnaireCard" role="dialog" aria-modal="true">
+      <div class="onboardEmoji">🎯</div>
+      <h2 class="questionnaireTitle">Wie möchtest du heute lernen?</h2>
+      <p class="questionnaireSub">Beantworte ein paar kurze Fragen — wir bauen daraus deine erste Lern-Vorlage. Du kannst alles später anpassen oder den Schritt überspringen.</p>
+
+      <div class="qField">
+        <label for="qGoalHours">Tägliches Lernziel (Stunden)</label>
+        <input type="number" id="qGoalHours" min="0.5" max="24" step="0.5" value="4" />
+      </div>
+      <div class="qField">
+        <label for="qLearnMin">Dauer eines Lernintervalls (Minuten)</label>
+        <input type="number" id="qLearnMin" min="5" max="240" step="5" value="30" />
+      </div>
+      <div class="qField">
+        <label for="qBreakSmall">Dauer einer kleinen Pause (Minuten)</label>
+        <input type="number" id="qBreakSmall" min="1" max="120" step="1" value="5" />
+      </div>
+      <div class="qField">
+        <label for="qBreakBig">Dauer einer großen Pause (Minuten)</label>
+        <input type="number" id="qBreakBig" min="1" max="120" step="1" value="10" />
+      </div>
+      <div class="qField qToggleField">
+        <div>
+          <label for="qBigBreakToggle">Ganz große Pause aktivieren?</label>
+          <div class="qToggleSub">Ersetzt regelmäßig eine Pause durch eine längere Erholungspause (180 Min nach je 4 Intervallen)</div>
+        </div>
+        <button type="button" class="toggleSwitch" id="qBigBreakToggle" aria-pressed="true">
+          <span class="track"><span class="thumb"></span></span>
+        </button>
+      </div>
+
+      <div class="qPreview" id="qPreview"></div>
+
+      <div class="qError" id="qError"></div>
+
+      <div class="qBtns">
+        <button type="button" class="btn neutral" id="qSkipBtn">Überspringen</button>
+        <button type="button" class="btn primary" id="qSubmitBtn">Vorlage erstellen</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ONBOARDING TOUR (first login) ── -->
+  <div class="onboardModal" id="onboardModal" aria-hidden="true">
+    <div class="onboardCard" role="dialog" aria-modal="true">
+      <div class="onboardSteps">
+        <div class="onboardSlide" data-step="1">
+          <div class="onboardEmoji">📚</div>
+          <h2>Willkommen bei Proko!</h2>
+          <p>Strukturiere deine Lernzeit mit Pomodoro-Intervallen, plane Aufgaben pro Einheit und sammle Punkte für jede gelernte 30-Minuten-Slice.</p>
+        </div>
+        <div class="onboardSlide" data-step="2" style="display:none;">
+          <div class="onboardEmoji">⏱</div>
+          <h2>Der Lern-Timer</h2>
+          <p>Starte ein Intervall mit ▶ und lerne fokussiert. Nach jeder Lerneinheit kommt automatisch eine Pause. <strong>Verlasse den Tab nicht während eines Intervalls</strong> — dein Fortschritt wird sonst zurückgesetzt.</p>
+        </div>
+        <div class="onboardSlide" data-step="3" style="display:none;">
+          <div class="onboardEmoji">✅</div>
+          <h2>Aufgaben planen</h2>
+          <p>Hovere über ein Intervall im Track-Balken, um Aufgaben hinzuzufügen. Markiere eine als „aktiv" mit dem Stern ★ — sie erscheint dann im Mini-Timer. Erledigte Aufgaben werden automatisch ins nächste Intervall mitgenommen.</p>
+        </div>
+        <div class="onboardSlide" data-step="4" style="display:none;">
+          <div class="onboardEmoji">🎲</div>
+          <h2>Würfel & Streaks</h2>
+          <p>Alle 30 Minuten Lernzeit schaltest du einen Wurf frei. Würfle für Punkte, baue einen Lernstreak auf (mind. 30 Min/Tag) und versuche dein Glück im Würfelspiel. Viel Erfolg!</p>
+        </div>
+      </div>
+      <div class="onboardDots" id="onboardDots"></div>
+      <div class="onboardBtns">
+        <button type="button" class="btn neutral" id="onboardSkip">Überspringen</button>
+        <button type="button" class="btn neutral" id="onboardBack" style="display:none;">Zurück</button>
+        <button type="button" class="btn primary" id="onboardNext">Weiter</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js" defer></script>
+</body>
+</html>
