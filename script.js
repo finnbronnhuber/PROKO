@@ -1508,6 +1508,18 @@
           sessionsDone: Array(TOTAL_SESSIONS).fill(false),
           breaksDone: Array(TOTAL_SESSIONS - 1).fill(false),
           curBreak: -1, running: false, alarmActive: false, compact: false,
+          // ── v3 Timer-Architektur: append-only Tages-Historie + Snapshot des laufenden Intervalls.
+          //   completedIntervals["YYYY-MM-DD"] = [{ learnMin, breakMin, completedAt, kind }]
+          //   activeInterval = null   ODER  {
+          //     kind: "learning" | "break",
+          //     startedAt: <ms wall-clock>,         // wann begonnen
+          //     plannedLearnMin: <int>,             // SNAPSHOT der Settings beim Start (≠ state.settings)
+          //     plannedBreakMin: <int>,             //   ┘ Setting-Änderungen modifizieren diese NIE
+          //     pausedAt: null | <ms>,              // null=läuft, sonst Zeitpunkt der letzten Pause
+          //     pausedElapsedMs: <int>              // bereits angesammelte Lernzeit aus früheren Resume-Zyklen
+          //   }
+          completedIntervals: {},
+          activeInterval: null,
           points: 0,
           pendingRolls: 0,
           pendingRollBonuses: [],
@@ -1746,6 +1758,37 @@
         if(Number.isFinite(p.soundVolume)) base.soundVolume = Math.max(0, Math.min(1, p.soundVolume));
         if(p.intervalTasks && typeof p.intervalTasks === "object") base.intervalTasks = p.intervalTasks;
         if(Array.isArray(p.completedHistory)) base.completedHistory = p.completedHistory.slice(-500);
+        // ── v3 Timer-State: append-only per-day history + active interval snapshot ──
+        if(p.completedIntervals && typeof p.completedIntervals === "object" && !Array.isArray(p.completedIntervals)){
+          base.completedIntervals = {};
+          for(const dayKey of Object.keys(p.completedIntervals)){
+            if(!/^\d{4}-\d{2}-\d{2}$/.test(dayKey)) continue;
+            const list = p.completedIntervals[dayKey];
+            if(!Array.isArray(list)) continue;
+            base.completedIntervals[dayKey] = list
+              .filter(e => e && Number.isFinite(e.learnMin))
+              .slice(0, 64)   // safety cap
+              .map(e => ({
+                learnMin:    Math.max(0, Math.floor(e.learnMin)),
+                breakMin:    Math.max(0, Math.floor(e.breakMin || 0)),
+                completedAt: Number.isFinite(e.completedAt) ? e.completedAt : Date.now(),
+                kind:        (e.kind === "session" || e.kind === "break") ? e.kind : "session",
+              }));
+          }
+        }
+        if(p.activeInterval && typeof p.activeInterval === "object"){
+          const a = p.activeInterval;
+          if((a.kind === "learning" || a.kind === "break") && Number.isFinite(a.startedAt)){
+            base.activeInterval = {
+              kind: a.kind,
+              startedAt: Math.floor(a.startedAt),
+              plannedLearnMin: Math.max(1, Math.floor(a.plannedLearnMin || base.settings.learn_min)),
+              plannedBreakMin: Math.max(0, Math.floor(a.plannedBreakMin || 0)),
+              pausedAt:        Number.isFinite(a.pausedAt) ? Math.floor(a.pausedAt) : null,
+              pausedElapsedMs: Math.max(0, Math.floor(a.pausedElapsedMs || 0)),
+            };
+          }
+        }
         if(Number.isFinite(p.diceTimerLeft)) base.diceTimerLeft = clamp(Math.floor(p.diceTimerLeft), 0, 1800);
         if(Number.isFinite(p.diceLearnedTodayMin)) base.diceLearnedTodayMin = Math.max(0, Math.floor(p.diceLearnedTodayMin));
         if(typeof p.diceLastFireDay === "string") base.diceLastFireDay = p.diceLastFireDay;
@@ -1828,6 +1871,8 @@
           soundVolume: state.soundVolume,
           intervalTasks: state.intervalTasks,
           completedHistory: state.completedHistory,
+          completedIntervals: state.completedIntervals,
+          activeInterval: state.activeInterval,
           diceTimerLeft: state.diceTimerLeft,
           diceLearnedTodayMin: state.diceLearnedTodayMin,
           diceLastFireDay: state.diceLastFireDay,
@@ -2024,26 +2069,31 @@
         if(autosaveInterval){ clearInterval(autosaveInterval); autosaveInterval = null; }
       }
       function setupSaveLifecycleHooks(){
-        // visibilitychange — primary trigger; fires when user switches tabs, minimizes,
-        // or (on mobile) backgrounds the browser. More reliable than beforeunload on iOS/Android.
+        // ── v3: Timer-Pause-Semantik ──
+        //   • Lernen läuft im Hintergrund DURCH (Tab-Wechsel, Fenster verschoben).
+        //   • Nur beim ECHTEN Schließen (pagehide / beforeunload) schreiben wir pausedAt,
+        //     damit nach Wieder-Öffnen exakt an gleicher Stelle weitergemacht werden kann.
+        //   • Pausen-Intervalle laufen IMMER per Wall-Clock weiter (kein pausedAt schreiben).
         document.addEventListener("visibilitychange", () => {
           if(document.visibilityState === "hidden"){
-            enforceAntiFarmingReset();        // ← reset learning interval (breaks are exempt)
+            // KEIN Reset mehr — der Wall-Clock-Anker übersteht Hintergrund-Throttling.
             flushSyncOnUnload();
-          } else if(document.visibilityState === "visible" && dirty){
-            // Returned to foreground; try a normal save (network may have come back)
-            saveToCloud();
+          } else if(document.visibilityState === "visible"){
+            // Bei Rückkehr: Tick neu seeden (falls Worker während Throttling fast eingeschlafen war)
+            if(state.running && tickAnchor){
+              // tickAnchor.wallStart bleibt — fresh tick re-syncs timeLeft on next worker tick
+            }
+            if(dirty) saveToCloud();
           }
         });
-        // pagehide — covers BFCache navigation and iOS/Safari unload scenarios
-        // where beforeunload does NOT fire reliably.
+        // pagehide — covers BFCache + iOS/Safari unload
         window.addEventListener("pagehide", () => {
-          enforceAntiFarmingReset();
+          pauseOnUnload();
           flushSyncOnUnload();
         });
-        // beforeunload — desktop legacy fallback (last resort).
+        // beforeunload — desktop legacy fallback
         window.addEventListener("beforeunload", () => {
-          enforceAntiFarmingReset();
+          pauseOnUnload();
           flushSyncOnUnload();
         });
         // online — retry pending saves when connectivity is back
@@ -2501,11 +2551,24 @@
         if(next <= 0) delete state.data[key]; else state.data[key] = next;
       }
       function updateDataFromToday(){
-        const todayMin = Number(state.data[todayISO()]) || 0;
-        const n = Math.min(Math.floor(todayMin / state.settings.learn_min), TOTAL_SESSIONS);
-        // CRITICAL: do NOT clobber sessionIdx/phase if the user is mid-phase.
-        // Otherwise reloading during a break advances sessionIdx ahead of the actual
-        // session being worked on, causing complete() to skip a session on break-end.
+        // ── v3: Source of truth is state.completedIntervals[today].length ──
+        // (NOT todayMin ÷ learn_min — that "merged" two 30-min blocks into one
+        //  60-min block when the user changed settings.)
+        // For users coming from v2 (no completedIntervals yet but with state.data),
+        // we fall back to the old derivation ONCE to avoid losing today's progress.
+        const day = todayISO();
+        let n;
+        const v3List = (state.completedIntervals && Array.isArray(state.completedIntervals[day]))
+          ? state.completedIntervals[day]
+          : null;
+        if(v3List){
+          n = Math.min(v3List.length, TOTAL_SESSIONS);
+        } else {
+          // v2 fallback: derive once from minutes (this happens only on first load
+          // after migration; subsequent days will be append-only).
+          const todayMin = Number(state.data[day]) || 0;
+          n = Math.min(Math.floor(todayMin / state.settings.learn_min), TOTAL_SESSIONS);
+        }
         const midPhase = state.phase === "learning" || state.phase === "break";
         state.sessionsDone = Array(TOTAL_SESSIONS).fill(false);
         state.breaksDone   = Array(TOTAL_SESSIONS - 1).fill(false);
@@ -2515,8 +2578,7 @@
           state.sessionIdx = n;
           if(n >= TOTAL_SESSIONS){ state.phase = "done"; state.timeLeft = 0; }
         } else {
-          // Keep the in-progress phase intact. Just make sure sessionIdx and curBreak
-          // still point at sane positions (no underflow). If they don't, fall back to n.
+          // Keep the in-progress phase intact; just sanity-check the indices.
           if(state.phase === "learning"){
             if(!Number.isInteger(state.sessionIdx) || state.sessionIdx < 0 || state.sessionIdx >= TOTAL_SESSIONS){
               state.sessionIdx = n;
@@ -2526,7 +2588,6 @@
               state.curBreak = Math.max(0, n - 1);
               state.sessionIdx = state.curBreak;
             }
-            // sessionIdx during a break should equal curBreak (i.e. the session we just finished)
             if(state.sessionIdx !== state.curBreak) state.sessionIdx = state.curBreak;
           }
         }
@@ -2571,17 +2632,29 @@
         releaseWakeLock();                  // free screen when phase ends
         if(state.phase === "learning"){
           // Defense-in-depth: if sessionIdx drifted out of bounds or onto an already-done
-          // session (can happen if updateDataFromToday ran mid-phase), snap to the first
-          // open session via nextTarget().
+          // session, snap to the first open session via nextTarget().
           let idx = state.sessionIdx;
           if(!Number.isInteger(idx) || idx < 0 || idx >= TOTAL_SESSIONS || state.sessionsDone[idx]){
             const [nk, ni] = nextTarget();
-            if(nk === "session") idx = ni; else return;  // nothing to complete
+            if(nk === "session") idx = ni; else return;
             state.sessionIdx = idx;
           }
+          // ── v3: append to today's IMMUTABLE history with the PLANNED minutes
+          // (NOT current settings — keeps history correct across setting changes).
+          const plannedLearn = (state.activeInterval && state.activeInterval.kind === "learning"
+            && Number.isFinite(state.activeInterval.plannedLearnMin))
+              ? state.activeInterval.plannedLearnMin
+              : effectiveLearnMin(idx);
+          const plannedBreak = (state.activeInterval && state.activeInterval.kind === "learning"
+            && Number.isFinite(state.activeInterval.plannedBreakMin))
+              ? state.activeInterval.plannedBreakMin
+              : breakMinAt(idx);
+          appendCompletedInterval({ learnMin: plannedLearn, breakMin: plannedBreak, kind: "session" });
           state.sessionsDone[idx] = true;
-          recordSession(effectiveLearnMin(idx));
+          recordSession(plannedLearn);      // ← use plannedLearn so today's data matches history
           carryOverTasks(idx);
+          // Now move into BREAK phase. Snapshot the break duration into a fresh activeInterval.
+          state.activeInterval = null;      // learning phase ended, clear snapshot
           if(idx === TOTAL_SESSIONS - 1){
             state.phase = "done"; state.timeLeft = 0; updateTimerUI(); drawTrack();
             if(silent) showFinish(); else { state.alarmActive = true; updateTimerUI(); startAlarm(); }
@@ -2590,15 +2663,22 @@
           }
           state.curBreak = idx;
           state.phase = "break";
-          state.timeLeft = breakMinAt(state.curBreak) * 60;
+          state.timeLeft = plannedBreak * 60;   // ← use plannedBreak (= snapshot value)
+          // Snapshot break-phase too — wall-clock continues even if tab is closed.
+          state.activeInterval = {
+            kind: "break",
+            startedAt: Date.now(),
+            plannedLearnMin: 0,
+            plannedBreakMin: plannedBreak,
+            pausedAt: null,
+            pausedElapsedMs: 0,
+          };
         } else if(state.phase === "break"){
-          // Mark the break that's actually ending (curBreak) — but don't trust the +1 jump.
-          // Use nextTarget() to find the actual next session, which prevents skip-bugs when
-          // sessionIdx was previously bumped by updateDataFromToday().
           const bIdx = (Number.isInteger(state.curBreak) && state.curBreak >= 0 && state.curBreak < state.breaksDone.length)
             ? state.curBreak
             : null;
           if(bIdx !== null) state.breaksDone[bIdx] = true;
+          state.activeInterval = null;      // break ended
           const [k, i] = nextTarget();
           if(k === "session"){
             state.sessionIdx = i;
@@ -2616,8 +2696,22 @@
         if(!silent){
           state.alarmActive = true;
           startAlarm();
-          notifyPhaseEnd(endedPhase);       // browser notification when tab is hidden
+          notifyPhaseEnd(endedPhase);
         }
+      }
+      // ── v3: per-day completion log helper ────────────────────────────────
+      function appendCompletedInterval(entry){
+        if(!state.completedIntervals || typeof state.completedIntervals !== "object"){
+          state.completedIntervals = {};
+        }
+        const day = todayISO();
+        if(!Array.isArray(state.completedIntervals[day])) state.completedIntervals[day] = [];
+        state.completedIntervals[day].push({
+          learnMin:    Math.max(0, Math.floor(entry.learnMin || 0)),
+          breakMin:    Math.max(0, Math.floor(entry.breakMin || 0)),
+          completedAt: Date.now(),
+          kind:        entry.kind || "session",
+        });
       }
       // Persist throttle: only write to localStorage at most every PERSIST_INTERVAL ms during ticking
       // PERSIST_INTERVAL imported from constants.js
@@ -2668,6 +2762,25 @@
         }
         state.running = !state.running;
         if(state.running){
+          // ── v3: snapshot interval params on transition idle/paused → running ──
+          // Only re-snapshot if there's no active interval yet, OR if the active one
+          // was a DIFFERENT phase. Existing snapshots are preserved across pause/resume
+          // so setting changes during pause don't retroactively change the duration.
+          if(!state.activeInterval || state.activeInterval.kind !== state.phase){
+            state.activeInterval = {
+              kind: state.phase,             // "learning" or "break"
+              startedAt: Date.now(),
+              plannedLearnMin: state.phase === "learning" ? effectiveLearnMin(state.sessionIdx) : 0,
+              plannedBreakMin: state.phase === "break"    ? breakMinAt(state.curBreak)         : breakMinAt(state.sessionIdx),
+              pausedAt: null,
+              pausedElapsedMs: 0,
+            };
+          } else if(state.activeInterval.pausedAt){
+            // Resuming after a pause: accumulate paused-elapsed and clear pausedAt.
+            // We do NOT add wall-clock time during pause to elapsed; the new anchor
+            // reflects "we restart counting from now with timeLeft preserved".
+            state.activeInterval.pausedAt = null;
+          }
           startTickAnchor();
           workerStart();
           if(state.phase === "learning"){
@@ -2676,10 +2789,14 @@
             ensureNotificationPermission();     // ask for permission on first start
           }
         } else {
+          // ── User-pressed pause: write pausedAt so we can restore later ──
           workerStop();
           tickAnchor = null;
           diceTrackingStop();
           releaseWakeLock();                    // free screen when paused
+          if(state.activeInterval && state.phase === "learning"){
+            state.activeInterval.pausedAt = Date.now();
+          }
         }
         persist(); updateTimerUI();
       }
@@ -2732,21 +2849,86 @@
         updateTimerUI();
         persist();
       }
-      // Anti-farming guard: when the tab closes / is hidden, a running learning interval is
-      // pulled back to the start of the interval so leaving the tab open passively can't
-      // count as learning. Break phases are exempt — they're allowed to count down.
-      function enforceAntiFarmingReset(){
-        if(state.phase !== "learning") return;
-        workerStop(); diceTrackingStop();
-        if(tickTimer){ clearTimeout(tickTimer); tickTimer = null; }
-        tickAnchor = null;
-        state.running = false;
-        state.timeLeft = phaseTotalSec();
-        releaseWakeLock();
-        // Mark dirty so the flushSyncOnUnload following this call uploads the reset state.
-        if(currentUser){ dirty = true; writeLocalFallback(); }
-        // Update UI so users returning to the tab see the reset state.
-        try{ updateTimerUI(); }catch(_){}
+      // ── v3 pause-on-real-close ──
+      // pagehide / beforeunload: user is closing the tab or navigating away.
+      //   • LEARNING phase → freeze the timer at the current timeLeft, write pausedAt.
+      //                      Browser tab is gone, no time should accumulate during absence.
+      //   • BREAK phase    → write NOTHING. Wall-clock continues; on next open we
+      //                      compute "have we passed plannedBreakMin?" and react.
+      //   • Other phases   → noop.
+      function pauseOnUnload(){
+        if(state.phase === "learning" && state.running){
+          state.running = false;
+          if(state.activeInterval){
+            state.activeInterval.pausedAt = Date.now();
+          }
+          // Snapshot timeLeft so resume() knows where we stopped.
+          if(currentUser){ dirty = true; writeLocalFallback(); }
+        }
+      }
+      // Legacy compatibility shim — kept as no-op so any remaining callers don't crash.
+      function enforceAntiFarmingReset(){ /* removed in v3 timer architecture */ }
+      // ── v3: reconcile the active interval after a reload ──────────────
+      // Called from applyLoadedState() BEFORE updateDataFromToday(). Three cases:
+      //   1. activeInterval is null → nothing to do.
+      //   2. activeInterval.kind === "learning" → was running before user closed tab.
+      //      If pausedAt is set, leave it paused (user must click Start).
+      //      We do NOT advance the timer during absence — learning only counts while open.
+      //   3. activeInterval.kind === "break" → break time keeps flowing while tab was closed.
+      //      Compute elapsed = (now - startedAt)/1000. If >= plannedBreakMin*60, break finished
+      //      during absence → complete() the break silently and move on.
+      function resolveActiveIntervalOnLoad(){
+        const a = state.activeInterval;
+        if(!a) return;
+        // Stale day check: if the interval was started on a different LOCAL day, drop it.
+        // (Otherwise yesterday's mid-break could "haunt" today.)
+        const startedDay = localDateKey(new Date(a.startedAt));
+        if(startedDay !== todayISO()){
+          state.activeInterval = null;
+          return;
+        }
+        if(a.kind === "learning"){
+          // Phase must already be "learning" — but if persisted state is missing it (edge case),
+          // set it now. running=false because tab was closed.
+          if(state.phase !== "learning") state.phase = "learning";
+          state.running = false;
+          // timeLeft was snapshotted on pauseOnUnload (or by complete()); keep it.
+          // If pausedAt isn't set yet (e.g. browser crash), set it now so user is in paused-state.
+          if(!a.pausedAt) a.pausedAt = Date.now();
+        } else if(a.kind === "break"){
+          // Wall-clock continues through tab-close. Compute elapsed in real time.
+          const elapsedMs = Date.now() - a.startedAt;
+          const totalMs = a.plannedBreakMin * 60 * 1000;
+          if(elapsedMs >= totalMs){
+            // Break is over (or already over) — promote to "ready for next session" silently.
+            // Replicate the break-completion path from complete() without the alarm/sounds.
+            const bIdx = state.curBreak;
+            if(Number.isInteger(bIdx) && bIdx >= 0 && bIdx < state.breaksDone.length){
+              state.breaksDone[bIdx] = true;
+            }
+            state.activeInterval = null;
+            // Caller (applyLoadedState) will run updateDataFromToday(); we just need phase set up.
+            state.phase = "idle";
+            state.running = false;
+            const [k, i] = nextTarget();
+            if(k === "session"){
+              state.sessionIdx = i;
+              state.timeLeft = effectiveLearnSec(i);
+            } else if(k === "break"){
+              state.curBreak = i;
+              state.phase = "break";
+              state.timeLeft = breakMinAt(i) * 60;
+            } else {
+              state.phase = "done"; state.timeLeft = 0;
+            }
+          } else {
+            // Still in break — recompute timeLeft so the UI reflects elapsed wall-clock.
+            state.timeLeft = Math.max(0, Math.ceil((totalMs - elapsedMs) / 1000));
+            state.phase = "break";
+            // Auto-resume the running break (no user action needed; wall-clock kept counting)
+            state.running = true;
+          }
+        }
       }
 
       const clickBoxes = [];
@@ -4528,6 +4710,12 @@
         recomputeTotalSessions();
         reconcileSessionArrays();
         flowResetIfNewDay();   // wipe stale flow timer display from previous day
+        // ── v3: midnight rollover — sessionsDone/breaksDone/sessionIdx must reset on a new local day ──
+        // If state was persisted yesterday with sessionIdx=5 and today's completedIntervals is empty
+        // (or doesn't exist), we MUST start fresh at sessionIdx=0 — that's the "neuer Tag bei
+        // Intervall 2" bug. updateDataFromToday() now uses completedIntervals[today], which is
+        // empty/absent on a new day → n=0 → sessionsDone all false → sessionIdx=0.
+        resolveActiveIntervalOnLoad();
         updateDataFromToday();
         updateSettingsView();
         renderTemplatesList();
